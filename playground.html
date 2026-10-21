@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Braitenberg vehicles playground</title>
+<link rel="stylesheet" href="style.css">
+<style>
+@media (min-width:1181px){.page{grid-template-columns:260px minmax(0,1fr) 300px}}
+.types{list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}
+.types li{display:grid;grid-template-columns:14px 1fr 44px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--rule);font:13px/1.3 system-ui,sans-serif}
+.types i{width:12px;height:12px;border:1px solid var(--ink);display:block}
+.types input{width:44px;font:13px system-ui;border:1px solid var(--rule);background:#fff;padding:2px 4px}
+.types small{display:block;color:var(--mute);font-size:11px}
+.legend{font:12px/1.5 system-ui,sans-serif;color:var(--mute);margin-top:6px}
+.legend .sub{padding-left:14px}
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
+label.chk{display:flex;gap:8px;align-items:center;font:13px system-ui,sans-serif;margin:8px 0}
+#chart{aspect-ratio:960/230;background:#fff;border:1px solid var(--rule)}
+#cv{cursor:default}
+.back{font:13px system-ui,sans-serif;margin:0 0 14px}
+.back a{color:var(--ink)}
+.follow{font:13px/1.5 system-ui,sans-serif;color:var(--mute);border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);padding:8px 0;margin:0 0 14px;min-height:116px}
+.follow dl{display:grid;grid-template-columns:62px 1fr;gap:1px 8px;margin:0}
+.follow dt{color:var(--mute)}
+.follow dd{margin:0;color:var(--ink)}
+.follow .t{font-weight:600}
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="rail">
+    <h2>Vehicles in the arena</h2>
+    <ul class="types" id="types"></ul>
+    <div class="legend" id="legend"></div>
+  </nav>
+  <main>
+    <div class="stagewrap"><canvas id="cv"></canvas></div>
+    <p id="vSummary">Several vehicles share one arena where food, light and heat come and go.</p>
+    <div class="bar">
+      <button id="bPause">Pause</button><button id="bReset">Reset</button><button id="bShuffle">New start</button>
+      <button id="bTrails" class="on">Trails</button>
+      <label>Speed <input id="speed" type="range" min="0.25" max="20" step="0.25" value="2"> <span id="speedV">2×</span></label>
+      <span class="grow"></span><button id="bPng">Save image</button><button id="bRec">Record clip</button>
+    </div>
+    <h3 class="inh" id="chTitle">Vehicles still alive</h3>
+    <canvas id="chart"></canvas>
+  </main>
+  <aside class="side">
+    <p class="back"><a href="index.html">← Vehicles 1–14</a></p>
+    <h1>Playground</h1>
+    <p id="vText" style="font-size:15px">Vehicles from the book share one arena. Light, food and heat appear and disappear. Food gives energy and heat takes it away, and every vehicle slowly loses energy and dies at zero. Each type keeps the wiring it has in the book.</p>
+    <div class="follow" id="follow"></div>
+    <div class="presets" id="presets"></div>
+    <div id="controls"></div>
+    <label class="chk"><input type="checkbox" id="replace"> Replace dead vehicles with copies of survivors, mutated for type 6</label>
+  </aside>
+</div>
+<script src="core.js"></script>
+<script>
+'use strict';
+(function(){
+const {W,H,SC,C,clamp,rad,gauss,TAU}=B;
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d');cv.width=W*SC;cv.height=H*SC;
+const CH=230,ch=$('chart'),cc=ch.getContext('2d');ch.width=W*SC;ch.height=CH*SC;
+const phi=rad(40);
+
+/* ---------- world ---------- */
+// eatR: a vehicle eats the nearest food closer than this (distance from the vehicle centre).
+// foodR, lightR, heatR: sensor scale; a source is felt up to 3.2 scales away, then not at all.
+const P={foodRate:0.35,foodLife:25,heatRate:0.08,lightRate:0.12,corr:0.7,drift:0,hunger:0.025,
+  eatR:55,eatRate:0.5,foodAmt:1.0,eMax:1.5,heatR:55,heatHurt:0.2,foodR:80,lightR:110,reach:3.2,mut:0.4};
+
+/* ---------- sensing ---------- */
+// Cardioid pattern, 1/(1+(d/R)^2) fall-off, shifted so it reaches zero at the range limit.
+// Each eye answers to the strongest source it has, so a cluster of food does not look like one big food.
+function stim(x,y,dir,list,R){
+  const D=R*P.reach,D2=D*D,R2=R*R,k0=1/(1+D2/R2),cd=Math.cos(dir),sd=Math.sin(dir);let s=0;
+  for(const o of list){
+    const dx=o.x-x,dy=o.y-y,d2=dx*dx+dy*dy;if(d2>=D2)continue;
+    const d=Math.sqrt(d2)||1e-6;
+    const q=(1+(dx*cd+dy*sd)/d)/2*(1/(1+d2/R2)-k0)/(1-k0);if(q>s)s=q;
+  }
+  return s;
+}
+function sens(v,list,R){
+  const out=[];
+  for(const side of[-1,1]){const[x,y]=B.toWorld(v,22,side*10);out.push(stim(x,y,v.th+side*v.phi,list,R))}
+  return out;
+}
+
+/* ---------- vehicle types: each keeps its wiring from the book ---------- */
+const TYPES=[
+ {id:'1',name:'1  one sensor, one motor',sub:'faster the more food it senses',col:'#9a9993',
+  m(v,s,dt,r){const f=(s.food[0]+s.food[1])/2;v.th+=0.7*Math.sqrt(dt)*gauss(r);const m=clamp(0.08+1.2*f);return[m,m]}},
+ {id:'2a',name:'2a  fear',sub:'flees heat (same side, excitatory)',col:'#d9a441',
+  m(v,s){return[clamp(0.45+2.5*s.heat[0]),clamp(0.45+2.5*s.heat[1])]}},
+ {id:'2b',name:'2b  aggression',sub:'charges at food (crossed, excitatory)',col:'#c4301c',
+  m(v,s){return[clamp(0.15+2*s.food[1]),clamp(0.15+2*s.food[0])]}},
+ {id:'3a',name:'3a  love',sub:'stops at food (same side, inhibitory)',col:'#e58fa8',
+  m(v,s){return[clamp(1-1.2*s.food[0]),clamp(1-1.2*s.food[1])]}},
+ {id:'3b',name:'3b  explorer',sub:'turns away from food (crossed, inhibitory)',col:'#6e9ad0',
+  m(v,s){return[clamp(1-1.6*s.food[1]),clamp(1-1.6*s.food[0])]}},
+ {id:'3c',name:'3c  several sensors',sub:'loves food, flees heat, charges at lights',col:'#7aa06a',
+  m(v,s){return[clamp(0.6-1.2*s.food[0]+2.2*s.heat[0]+1.2*s.light[1]),clamp(0.6-1.2*s.food[1]+2.2*s.heat[1]+1.2*s.light[0])]}},
+ {id:'4a',name:'4a  preferred distance',sub:'circles food (response not monotonic)',col:'#8a6bb0',
+  m(v,s){const f=x=>0.2+0.8*Math.exp(-Math.pow((x-0.35)/0.3,2));return[f(s.food[1]),f(s.food[0])]}},
+ {id:'5',name:'5  memory',sub:'2b plus a latch, so it keeps going when food vanishes',col:'#4b6a8a',
+  init(v){v.M=0},
+  m(v,s,dt){const seen=Math.max(...s.food)>0.15;v.M=seen?1:v.M*Math.exp(-dt/1.5);const f=!seen&&v.M>0.15?0.55:0;return[clamp(0.15+2*s.food[1]+f),clamp(0.15+2*s.food[0]+f)]}},
+ {id:'6',name:'6  selection',sub:'random wiring that evolves with replacement',col:'#1c1c1a',
+  init(v,r){const w=()=>(r()*2-1)*2;v.g=v.g||{a:w(),b:w(),c:w(),d:w(),e:w(),f:w(),bs:0.1+r()*0.4}},
+  m(v,s){const g=v.g;return[clamp(g.bs+g.a*s.food[0]+g.b*s.food[1]+g.e*s.heat[0]),clamp(g.bs+g.c*s.food[0]+g.d*s.food[1]+g.f*s.heat[1])]}},
+ {id:'7',name:'7  mnemotrix',sub:'2b that learns that light means food',col:'#2f8f83',
+  init(v){v.w=0},
+  m(v,s,dt,r,sim){const a=Math.max(...s.light),b=Math.max(...s.food);
+   v.w=clamp(v.w+dt*(0.15*clamp(a*3)*clamp(b*3)*(1-v.w)-v.w/150));
+   return[clamp(0.15+2*(s.food[1]+v.w*s.light[1])),clamp(0.15+2*(s.food[0]+v.w*s.light[0]))]}},
+ {id:'8',name:'8  movement detectors',sub:'2b that only sees moving food, needs drift',col:'#b5651d',moveOnly:true,
+  m(v,s){return[clamp(0.15+2.4*s.food[1]),clamp(0.15+2.4*s.food[0])]}},
+ {id:'13',name:'13  foresight',sub:'8 plus a predictor that aims where the food will be',col:'#a02c5a',lead:true,
+  m(v,s){return[clamp(0.15+2.4*s.food[1]),clamp(0.15+2.4*s.food[0])]}}
+];
+const byId={};TYPES.forEach(t=>byId[t.id]=t);
+const counts={};TYPES.forEach(t=>counts[t.id]=['1','2b','3a','4a','7'].includes(t.id)?3:0);
+
+/* ---------- type 6: which of the four book wirings is this genome? ---------- */
+// Left motor: a (left eye), b (right eye). Right motor: c (left eye), d (right eye).
+// Same side = (a+d)/2, crossed = (b+c)/2. Positive excitatory, negative inhibitory.
+const WIRES={fear:'same side, excitatory',aggression:'crossed, excitatory',love:'same side, inhibitory',explorer:'crossed, inhibitory'};
+function wiring(g){
+  const same=(g.a+g.d)/2,cross=(g.b+g.c)/2;
+  const sc={fear:Math.max(0,same),love:Math.max(0,-same),aggression:Math.max(0,cross),explorer:Math.max(0,-cross)};
+  let k='fear';for(const q in sc)if(sc[q]>sc[k])k=q;
+  return{name:k,how:WIRES[k],same,cross,seek:k==='aggression'||k==='love'};
+}
+const meanGenome=vs=>{const g={a:0,b:0,c:0,d:0,e:0,f:0,bs:0};for(const v of vs)for(const k in g)g[k]+=v.g[k]/vs.length;return g};
+const sgn=x=>(x>=0?'+':'−')+Math.abs(x).toFixed(2);
+
+/* ---------- simulation ---------- */
+const sim={items:[],vehs:[],t:0,seed:11,rng:null,paused:false,speed:2,trails:true,labels:false,stat:{hits:0},alive:[],dead:{},births:0,follow:null};
+const lifeOf={light:[25,40],heat:[20,30]};
+function spawnItem(kind){
+  const r=sim.rng;let x,y;
+  const lights=sim.items.filter(o=>o.kind==='light');
+  if(kind==='org'&&lights.length&&r()<P.corr){const l=lights[(r()*lights.length)|0],a=r()*TAU,d=30+r()*40;x=clamp(l.x+Math.cos(a)*d,40,W-40);y=clamp(l.y+Math.sin(a)*d,40,H-40)}
+  else{x=50+r()*(W-100);y=50+r()*(H-100)}
+  const o={kind,x,y,t0:sim.t,power:1};
+  if(kind==='org'){o.life=P.foodLife*(0.7+0.6*r());o.amt=P.foodAmt;if(P.drift>0){const a=r()*TAU;o.vx=Math.cos(a)*P.drift;o.vy=Math.sin(a)*P.drift}}
+  else{o.life=lifeOf[kind][0]+r()*(lifeOf[kind][1]-lifeOf[kind][0]);if(kind==='heat')o.R=P.heatR}
+  sim.items.push(o);
+}
+function newVeh(t,genome){
+  const r=sim.rng,v=B.mkVeh(60+r()*(W-120),60+r()*(H-120),r()*TAU);
+  v.type=t;v.phi=phi;v.sc=0.8;v.fill=t.col;v.e=0.75+0.45*r();v.born=sim.t;v.tc=t.col;v.hurt=0;v.ate=0;v.eating=null;
+  if(genome)v.g=genome;if(t.init)t.init(v,r);return v;
+}
+function snapshot(){
+  const row={t:sim.t};TYPES.forEach(t=>row[t.id]=sim.vehs.filter(v=>v.type===t).length);
+  row.seek=sim.vehs.filter(v=>v.type.id==='6'&&wiring(v.g).seek).length;sim.alive.push(row);
+}
+function reset(newSeed){
+  if(newSeed)sim.seed=(Math.random()*1e9)|0;
+  sim.rng=B.mulberry32(sim.seed);sim.t=0;sim.items=[];sim.vehs=[];sim.alive=[];sim.dead={};sim.follow=null;
+  TYPES.forEach(t=>sim.dead[t.id]=[]);
+  for(let i=0;i<3;i++)spawnItem('light');for(let i=0;i<4;i++)spawnItem('org');
+  TYPES.forEach(t=>{for(let i=0;i<counts[t.id];i++)sim.vehs.push(newVeh(t))});
+  snapshot();
+}
+// parent of a replacement: the living vehicle of that type with the most energy;
+// newborns (under 15 s) rank last, their energy says nothing about their wiring yet
+const fit=q=>(sim.t-q.born>15?10:0)+q.e;
+const fittest=vs=>vs.reduce((a,b)=>!a||fit(b)>fit(a)?b:a,null);
+function tick(dt){
+  const r=sim.rng;
+  if(r()<P.foodRate*dt)spawnItem('org');if(r()<P.heatRate*dt)spawnItem('heat');if(r()<P.lightRate*dt)spawnItem('light');
+  for(const o of sim.items){if(o.vx){o.x+=o.vx*dt;o.y+=o.vy*dt;if(o.x<30||o.x>W-30)o.vx*=-1;if(o.y<30||o.y>H-30)o.vy*=-1}}
+  sim.items=sim.items.filter(o=>sim.t-o.t0<o.life&&!(o.kind==='org'&&o.amt<=0));
+  const foods=[],moving=[],lights=[],heats=[];
+  for(const o of sim.items){if(o.kind==='org'){foods.push(o);if(o.vx)moving.push(o)}else if(o.kind==='light')lights.push(o);else if(o.kind==='heat')heats.push(o)}
+  const led=moving.map(o=>({x:o.x+o.vx*0.9,y:o.y+o.vy*0.9}));
+  for(let i=sim.vehs.length-1;i>=0;i--){
+    const v=sim.vehs[i],t=v.type;
+    const s={food:sens(v,t.lead?led:t.moveOnly?moving:foods,P.foodR),light:sens(v,lights,P.lightR),heat:sens(v,heats,P.heatR)};
+    v.sL=Math.max(...s.food);v.sR=v.sL;
+    const[mL,mR]=t.m(v,s,dt,r,sim);B.drive(v,clamp(mL),clamp(mR),dt);B.bounce(v);B.trail(v,dt);
+    v.e-=P.hunger*dt;
+    // eat the nearest food within reach, as long as there is room for more energy
+    let best=null,bd=P.eatR;v.eating=null;
+    for(const o of foods){if(o.amt<=0)continue;const d=Math.hypot(o.x-v.x,o.y-v.y);if(d<bd){bd=d;best=o}}
+    if(best&&v.e<P.eMax){const g=Math.min(P.eatRate*dt,best.amt,P.eMax-v.e);best.amt-=g;v.e+=g;v.ate+=g;v.eating=best}
+    for(const o of heats)if(Math.hypot(o.x-v.x,o.y-v.y)<o.R){v.e-=P.heatHurt*dt;v.hurt+=P.heatHurt*dt}
+    if(v.e<=0){
+      const age=sim.t-v.born;sim.dead[t.id].push(age);sim.vehs.splice(i,1);
+      if(sim.follow&&sim.follow.v===v)sim.follow.end={age,cause:v.hurt>0.3?'heat':'hunger'};
+      if($('replace').checked){
+        const mates=sim.vehs.filter(q=>q.type===t);let g=null;
+        if(t.id==='6'){const base=fittest(mates);if(base){g={};for(const k in base.g)g[k]=clamp(base.g[k]+gauss(r)*P.mut*(k==='bs'?0.3:1),k==='bs'?0:-3,k==='bs'?0.7:3)}}
+        sim.vehs.push(newVeh(t,g));
+      }
+    }
+  }
+  if(Math.floor(sim.t)!==Math.floor(sim.t-dt))snapshot();
+}
+
+/* ---------- ui ---------- */
+const ul=$('types');
+TYPES.forEach(t=>{const li=document.createElement('li');li.innerHTML=`<i style="background:${t.col}"></i><span>${t.name}<small>${t.sub}</small></span><input type="number" min="0" max="8" value="${counts[t.id]}" aria-label="number of ${t.name}">`;
+  li.querySelector('input').onchange=e=>{counts[t.id]=clamp(+e.target.value||0,0,8);reset(false)};ul.appendChild(li)});
+const sliders=[
+ {id:'foodRate',label:'New food per second',min:0.05,max:1.2,step:0.05,fmt:x=>x.toFixed(2)},
+ {id:'foodLife',label:'Food lasts',min:5,max:60,step:1,fmt:x=>x+' s'},
+ {id:'heatRate',label:'New heat per second',min:0,max:0.5,step:0.01,fmt:x=>x.toFixed(2)},
+ {id:'lightRate',label:'New light per second',min:0,max:0.5,step:0.01,fmt:x=>x.toFixed(2)},
+ {id:'corr',label:'Food near lights',min:0,max:1,step:0.05,fmt:x=>Math.round(x*100)+' %'},
+ {id:'drift',label:'Food drift speed',min:0,max:50,step:1,fmt:x=>x+' px/s'},
+ {id:'hunger',label:'Energy lost per second',min:0.01,max:0.08,step:0.005,fmt:x=>x.toFixed(3)}];
+const box=$('controls');
+function buildSliders(){box.innerHTML='';sliders.forEach(p=>{const d=document.createElement('div');d.className='ctl';
+  d.innerHTML=`<div><label for="w_${p.id}">${p.label}</label><output>${p.fmt(P[p.id])}</output></div><input id="w_${p.id}" type="range" min="${p.min}" max="${p.max}" step="${p.step}" value="${P[p.id]}">`;
+  const inp=d.querySelector('input'),out=d.querySelector('output');inp.oninput=()=>{P[p.id]=+inp.value;out.textContent=p.fmt(+inp.value)};box.appendChild(d)})}
+const PRESETS={'Default':{foodRate:0.35,foodLife:25,heatRate:0.08,lightRate:0.12,corr:0.7,drift:0,hunger:0.025},
+ 'Plenty':{foodRate:0.8,foodLife:40,heatRate:0.05,lightRate:0.1,corr:0.5,drift:0},'Scarce':{foodRate:0.12,foodLife:15,heatRate:0.1,lightRate:0.12,corr:0.5,drift:0},
+ 'Food near lights':{foodRate:0.35,foodLife:25,heatRate:0.08,lightRate:0.2,corr:1,drift:0},'Hot':{foodRate:0.4,foodLife:25,heatRate:0.4,lightRate:0.1,corr:0.5,drift:0},'Moving food':{foodRate:0.4,foodLife:30,heatRate:0.05,lightRate:0.1,corr:0.3,drift:30}};
+const pr=$('presets');Object.keys(PRESETS).forEach(k=>{const b=document.createElement('button');b.textContent=k;b.onclick=()=>{Object.assign(P,PRESETS[k]);buildSliders();reset(false)};pr.appendChild(b)});
+buildSliders();
+$('bPause').onclick=()=>{sim.paused=!sim.paused;$('bPause').textContent=sim.paused?'Play':'Pause';$('bPause').classList.toggle('on',sim.paused)};
+$('bReset').onclick=()=>reset(false);$('bShuffle').onclick=()=>reset(true);
+$('bTrails').onclick=()=>{sim.trails=!sim.trails;$('bTrails').classList.toggle('on',sim.trails)};
+$('speed').oninput=e=>{sim.speed=+e.target.value;$('speedV').textContent=sim.speed+'×'};
+const dl=(b,n)=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
+$('bPng').onclick=()=>cv.toBlob(b=>dl(b,'braitenberg-playground.png'));
+
+const chartTitle=()=>!$('replace').checked?'Vehicles still alive':counts['6']?'Vehicles alive, dashed line for type 6 that seek food':'Vehicles alive, dead ones replaced';
+
+// recording: stage and chart are composited into one offscreen canvas every frame
+const HEAD=30,rc=document.createElement('canvas'),rk=rc.getContext('2d');rc.width=W*SC;rc.height=(H+HEAD+CH)*SC;
+function compose(){
+  rk.setTransform(1,0,0,1,0,0);rk.fillStyle='#fff';rk.fillRect(0,0,rc.width,rc.height);
+  rk.drawImage(cv,0,0);rk.drawImage(ch,0,(H+HEAD)*SC);
+  rk.setTransform(SC,0,0,SC,0,0);
+  rk.strokeStyle=C.ink;rk.lineWidth=1;rk.strokeRect(.5,.5,W-1,H-1);
+  rk.strokeStyle=C.rule;rk.strokeRect(.5,H+HEAD+.5,W-1,CH-1);
+  rk.fillStyle=C.mute;rk.font='600 11px system-ui';rk.textAlign='left';rk.textBaseline='alphabetic';
+  if('letterSpacing' in rk)rk.letterSpacing='1.2px';rk.fillText(chartTitle().toUpperCase(),2,H+HEAD-9);if('letterSpacing' in rk)rk.letterSpacing='0px';
+}
+let rec=null;
+$('bRec').onclick=()=>{
+  if(rec){rec.stop();return}
+  if(!window.MediaRecorder){alert('Recording needs Chrome, Edge or Firefox.');return}
+  const mime=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(t=>MediaRecorder.isTypeSupported(t))||'';
+  const chunks=[];compose();rec=new MediaRecorder(rc.captureStream(30),{mimeType:mime,videoBitsPerSecond:8e6});
+  rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+  rec.onstop=()=>{dl(new Blob(chunks,{type:mime}),'braitenberg-playground.webm');rec=null;$('bRec').textContent='Record clip';$('bRec').classList.remove('on')};
+  rec.start();$('bRec').textContent='Stop and save';$('bRec').classList.add('on');
+};
+
+// keys: Space pauses, R resets. Not while typing a number; a focused button must not also fire on Space.
+addEventListener('keydown',e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  const el=e.target,tag=el.tagName;
+  if(tag==='TEXTAREA'||(tag==='INPUT'&&el.type!=='range'))return;
+  if(e.key===' '){e.preventDefault();if(tag==='BUTTON')el.blur();if(!e.repeat)$('bPause').click()}
+  else if(e.key==='r'||e.key==='R'){if(!e.repeat)reset(false)}
+});
+
+// click a vehicle to follow it, click again to let go
+const toWorld=e=>{const r=cv.getBoundingClientRect();return[(e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*H]};
+const pick=(x,y)=>{let best=null,bd=34;for(const v of sim.vehs){const d=Math.hypot(v.x-x,v.y-y);if(d<bd){bd=d;best=v}}return best};
+cv.addEventListener('click',e=>{
+  const[x,y]=toWorld(e),v=pick(x,y),f=sim.follow;
+  sim.follow=v&&!(f&&f.v===v)?{v,end:null}:null;
+});
+cv.addEventListener('pointermove',e=>{const[x,y]=toWorld(e);cv.style.cursor=pick(x,y)?'pointer':'default'});
+let lastFollow='',lastTitle='';
+function showFollow(){
+  const f=sim.follow;let h;
+  if(!f)h='Click a vehicle on the stage to follow it. Its type, energy and age show here. Click again to let go.';
+  else{
+    const v=f.v,t=v.type,age=f.end?f.end.age:sim.t-v.born;
+    h=`<dl><dt>Following</dt><dd class="t">${t.name.replace(/\s\s+/,' ')}</dd>`;
+    if(f.end)h+=`<dt>Status</dt><dd>died of ${f.end.cause}</dd><dt>Age</dt><dd>${age.toFixed(0)} s</dd>`;
+    else h+=`<dt>Energy</dt><dd>${Math.max(0,v.e).toFixed(2)} of ${P.eMax.toFixed(1)}</dd><dt>Age</dt><dd>${age.toFixed(0)} s</dd>`;
+    if(t.id==='6'){const w=wiring(v.g);h+=`<dt>Wiring</dt><dd>${w.name} (${w.how})</dd><dt>Weights</dt><dd>same side ${sgn(w.same)}, crossed ${sgn(w.cross)}</dd>`}
+    if(t.id==='7'&&!f.end)h+=`<dt>Learned</dt><dd>light means food, ${(v.w*100).toFixed(0)} %</dd>`;
+    h+='</dl>';
+  }
+  if(h!==lastFollow){lastFollow=h;$('follow').innerHTML=h}
+}
+
+/* ---------- drawing ---------- */
+// survivors chart: step lines, thin grid, a small label at the right end of each line
+function drawChart(){
+  const k=cc;k.setTransform(SC,0,0,SC,0,0);k.fillStyle='#fff';k.fillRect(0,0,W,CH);
+  const x0=44,y0=14,pw=W-44-68,ph=172,span=Math.max(120,sim.t),mx=Math.max(3,...TYPES.map(t=>counts[t.id]));
+  const X=t=>x0+t/span*pw,Y=n=>y0+ph-n/mx*ph;
+  k.lineWidth=1;k.strokeStyle='#e4e1d8';k.beginPath();
+  const ys=mx>8?2:1;for(let n=0;n<=mx;n+=ys){const y=Math.round(Y(n))+.5;k.moveTo(x0,y);k.lineTo(x0+pw,y)}
+  const xs=span<=240?30:span<=600?60:120;for(let t=xs;t<=span;t+=xs){const x=Math.round(X(t))+.5;k.moveTo(x,y0);k.lineTo(x,y0+ph)}
+  k.stroke();
+  k.strokeStyle=C.ink;k.beginPath();k.moveTo(x0+.5,y0);k.lineTo(x0+.5,y0+ph+.5);k.lineTo(x0+pw,y0+ph+.5);k.stroke();
+  for(let n=0;n<=mx;n+=ys)B.text(k,String(n),x0-7,Y(n)+4,C.mute,13,'right');
+  for(let t=0;t<=span;t+=xs)B.text(k,t+(t===0?' s':''),X(t),y0+ph+16,C.mute,13,t===0?'left':'center');
+  // one line per present type; equal values are nudged apart by a pixel or two so they stay readable
+  const series=TYPES.filter(t=>counts[t.id]).map(t=>({id:t.id,key:t.id,col:t.col,dash:[]}));
+  if(counts['6']&&$('replace').checked)series.push({id:'6 seek',key:'seek',col:byId['6'].col,dash:[4,3]});
+  const tags=[],xe=X(sim.t);
+  series.forEach((sr,i)=>{
+    const off=(i-(series.length-1)/2)*1.7,h=sim.alive.map(row=>row[sr.key]);
+    k.strokeStyle=sr.col;k.lineWidth=sr.dash.length?1.4:2;k.setLineDash(sr.dash);k.beginPath();
+    let py=null;
+    sim.alive.forEach((row,j)=>{const x=X(row.t),y=Y(h[j])+off;if(py===null)k.moveTo(x,y);else{k.lineTo(x,py);k.lineTo(x,y)}py=y});
+    k.lineTo(xe,py);k.stroke();k.setLineDash([]);
+    tags.push({y0:py,y:py,id:sr.id,col:sr.col});
+  });
+  // a small label at the right end of each line; labels are spread so they do not overlap
+  tags.sort((a,b)=>a.y-b.y);
+  const gap=13;for(let i=1;i<tags.length;i++)if(tags[i].y-tags[i-1].y<gap)tags[i].y=tags[i-1].y+gap;
+  const over=tags.length?tags[tags.length-1].y-(y0+ph+6):0;if(over>0)tags.forEach(q=>q.y-=over);
+  const lx=xe+7;
+  for(const q of tags){
+    if(Math.abs(q.y-q.y0)>3){k.strokeStyle=q.col;k.lineWidth=1;k.beginPath();k.moveTo(xe,q.y0);k.lineTo(lx,q.y);k.stroke()}
+    k.fillStyle=q.col;k.fillRect(lx,q.y-4,7,7);k.strokeStyle=C.ink;k.lineWidth=.8;k.strokeRect(lx+.5,q.y-3.5,6,6);B.text(k,q.id,lx+11,q.y+4,C.ink,13);
+  }
+}
+function draw(){
+  const c=ctx;c.setTransform(SC,0,0,SC,0,0);c.fillStyle='#fff';c.fillRect(0,0,W,H);
+  const fade=o=>Math.min(1,(o.life-(sim.t-o.t0))/3);
+  for(const o of sim.items)if(o.kind==='heat'){c.globalAlpha=fade(o);B.drawItem(c,o,sim);c.globalAlpha=1}
+  if(sim.trails)B.drawTrails(c,sim);
+  for(const o of sim.items)if(o.kind!=='heat'){c.globalAlpha=fade(o);
+    if(o.kind==='org'){const a=clamp(o.amt/P.foodAmt);c.save();c.translate(o.x,o.y);c.scale(0.6+0.6*a,0.6+0.6*a);B.drawItem(c,{...o,x:0,y:0},sim);c.restore()}else B.drawItem(c,o,sim);c.globalAlpha=1}
+  // a thin red line from a vehicle to the food it is eating
+  c.strokeStyle=C.red;c.lineWidth=1.5;
+  for(const v of sim.vehs)if(v.eating){c.beginPath();c.moveTo(v.x,v.y);c.lineTo(v.eating.x,v.eating.y);c.stroke()}
+  for(const v of sim.vehs){B.drawVeh(c,v);if(v.e<0.4){c.strokeStyle=C.red;c.lineWidth=2;c.beginPath();c.arc(v.x,v.y,22,-1.57,-1.57+TAU*Math.max(0,v.e)/0.4);c.stroke()}}
+  const f=sim.follow;
+  if(f&&!f.end){c.strokeStyle=C.ink;c.lineWidth=1.2;c.setLineDash([3,3]);c.beginPath();c.arc(f.v.x,f.v.y,30,0,TAU);c.stroke();c.setLineDash([])}
+  c.fillStyle=C.ink;c.font='600 14px system-ui';c.textAlign='left';c.fillText('Playground',14,24);
+  c.fillStyle=C.mute;c.font='12px system-ui';c.fillText(`food ${sim.items.filter(o=>o.kind==='org').length}   light ${sim.items.filter(o=>o.kind==='light').length}   heat ${sim.items.filter(o=>o.kind==='heat').length}   vehicles ${sim.vehs.length}`,14,H-12);
+  c.textAlign='right';c.fillText(sim.t.toFixed(0)+' s',W-12,H-12);
+  const ct=chartTitle();if(ct!==lastTitle){lastTitle=ct;$('chTitle').textContent=ct}
+  drawChart();showFollow();
+  if(rec)compose();
+}
+function legend(){
+  const rows=TYPES.filter(t=>counts[t.id]).map(t=>{const d=sim.dead[t.id],m=d.length?d.reduce((a,b)=>a+b)/d.length:0,vs=sim.vehs.filter(v=>v.type===t);
+    let h=`<div><span style="color:${t.col==='#9a9993'?'#6f6e69':t.col}">■</span> ${t.id}  ${vs.length} alive${d.length?`, mean life ${m.toFixed(0)} s`:''}`;
+    if(t.id==='6'&&vs.length){const w=wiring(meanGenome(vs)),n=vs.filter(v=>wiring(v.g).seek).length;
+      h+=`<div class="sub">wiring now ${w.name} (${w.how})</div><div class="sub">${n} of ${vs.length} seek food</div>`}
+    return h+'</div>'});
+  $('legend').innerHTML=rows.join('');
+}
+let last=performance.now(),acc=0,lg=0;
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000);last=now;
+  if(!sim.paused){acc+=dt*sim.speed;let n=0;while(acc>=1/60&&n<400){sim.t+=1/60;tick(1/60);acc-=1/60;n++}if(n>=400)acc=0}
+  draw();if((lg+=dt)>0.5){lg=0;legend()}
+  requestAnimationFrame(frame);
+}
+$('speedV').textContent=sim.speed+'×';
+B.pg={sim,tick,reset,P,counts,TYPES,wiring,meanGenome,draw,legend};
+reset(false);requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

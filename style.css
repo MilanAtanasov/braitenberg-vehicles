@@ -1,0 +1,89 @@
+:root{--paper:#fbfaf6;--ink:#1c1c1a;--mute:#6f6e69;--rule:#d9d6cd;--red:#c4301c}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink)}
+body{font:17px/1.55 Georgia,"Iowan Old Style","Palatino Linotype",Palatino,serif}
+button,input,select,.rail li,label,.tabs,.hud,.seed,.keys{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+/* Width cap follows the window height so stage + bar + panel fit without vertical scroll.
+   640 = rail 200 + side 320 + gaps 64 + padding 56. The stage column w gives a page height of about 0.823*w + 198,
+   so w = (100vh - 208px) * 960/790. Never below 1180 (the narrow layouts), never above 1890 (stage 1250). */
+.page{display:grid;grid-template-columns:200px minmax(0,1fr) 320px;gap:0 32px;max-width:clamp(1180px,calc((100vh - 208px) * 96 / 79 + 640px),1890px);margin:0 auto;padding:24px 28px 40px}
+/* playground.html: columns 260 + 300 (680 fixed), arena 16:9 plus a 960:230 chart, one-line bar */
+.page:has(.types){max-width:clamp(1180px,calc((100vh - 146px) * 96 / 77 + 680px),1930px)}
+.rail h2{font:600 12px system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);margin:4px 0 10px}
+.rail ol{position:relative;list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}
+.rail li{display:grid;grid-template-columns:26px 1fr;padding:6px 0;border-bottom:1px solid var(--rule);cursor:pointer;font-size:14px;line-height:1.3;color:var(--mute)}
+.rail li b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
+.rail li:hover{color:var(--ink)}
+.rail li.on{color:var(--red)}
+.rail li.on b{color:var(--red)}
+.src{font-size:12px;color:var(--mute);margin-top:16px;line-height:1.4}
+.stagewrap{border:1px solid var(--ink)}
+#vSummary{font:17px/1.4 Georgia,"Iowan Old Style","Palatino Linotype",Palatino,serif;color:var(--ink);margin:8px 0 4px}
+canvas{display:block;width:100%}
+#cv{aspect-ratio:16/9;background:#fff;touch-action:none}
+#inner{aspect-ratio:960/250;background:#fff;border:1px solid var(--rule)}
+.bar{margin:10px 0 18px;font-size:13px}
+.row{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;margin-bottom:8px}
+.g{display:flex;align-items:center;gap:8px}
+.tools{flex:1 1 auto}
+.tools #bPresent{margin-left:auto}
+.bar label{color:var(--mute);gap:6px}
+.bar input{width:100px;accent-color:var(--red)}
+.seed{font-size:13px;color:var(--mute);font-variant-numeric:tabular-nums;white-space:nowrap}
+.keys{margin:0;font-size:12px;line-height:1.3;color:var(--mute)}
+button,select{font-size:13px;line-height:1.25;color:var(--ink);background:none;border:1px solid var(--ink);border-radius:0;padding:4px 10px;cursor:pointer}
+select{background:var(--paper);height:26px;padding:0 6px}
+select:disabled{color:var(--mute);border-color:var(--rule);cursor:default}
+button:hover{background:var(--ink);color:var(--paper)}
+button.on{background:var(--ink);color:var(--paper)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.inh{font:600 12px system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);margin:0 0 6px}
+.side h1{font-size:26px;line-height:1.15;margin:2px 0 14px;font-weight:600}
+.side h1 span{color:var(--red)}
+.tabs{display:flex;flex-wrap:wrap;gap:0;margin-bottom:12px;border-bottom:1px solid var(--rule)}
+.tabs button{border:0;border-bottom:2px solid transparent;padding:4px 12px 4px 0;margin-right:6px;background:none;color:var(--mute);font-size:14px}
+.tabs button:hover{background:none;color:var(--ink)}
+.tabs button.on{background:none;color:var(--ink);border-bottom-color:var(--red)}
+#vText{margin:0 0 16px;font-size:16px}
+.ctl{font:13px system-ui,sans-serif;color:var(--mute);margin:10px 0}
+.ctl div{display:flex;justify-content:space-between}
+.ctl output{color:var(--ink);font-variant-numeric:tabular-nums}
+.ctl input{width:100%;accent-color:var(--red);margin:2px 0 0}
+.note{font-size:13px;color:var(--mute);margin-top:18px}
+body:not(.present) #bInside{display:none}
+
+body.embed #vSummary,body.embed .rail,body.embed .side,body.embed .inh,body.embed #inner,body.embed .keys,body.embed #bPresent,body.embed #bInside{display:none}
+body.embed .page{grid-template-columns:1fr;padding:8px;max-width:1560px}
+
+/* present mode: the stage fills the window (width --pw is set by ui.js, height follows from 16:9); text and panel are hidden */
+body.present{overflow:hidden}
+body.present .rail,body.present .side,body.present .keys,body.present .inh,body.present #inner{display:none}
+body.present.inside .inh,body.present.inside #inner{display:block}
+body.present .page{display:block;max-width:none;padding:12px 12px calc(var(--barh,44px) + 8px)}
+body.present main{width:var(--pw,100%);margin:0 auto}
+body.present .row{display:contents}
+body.present .tools #bInside{margin-left:auto}
+body.present .tools #bPresent{margin-left:0}
+body.present .bar{position:fixed;left:0;right:0;bottom:0;z-index:2;margin:0;padding:6px 12px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;background:var(--paper);border-top:1px solid var(--rule)}
+
+@media (max-width:1180px){.page{grid-template-columns:150px minmax(0,1fr)}.side{grid-column:1/3;margin-top:10px;max-width:700px}}
+@media (max-width:760px){
+  .page{grid-template-columns:minmax(0,1fr);padding:12px 16px 32px}
+  .rail{display:contents}
+  .rail h2{display:none}
+  .rail ol{order:1;display:flex;gap:6px;overflow-x:auto;border:0;margin:0 0 12px;padding-bottom:6px;scrollbar-width:none}
+  .rail ol::-webkit-scrollbar{display:none}
+  .rail li{display:flex;flex:none;gap:6px;white-space:nowrap;border:1px solid var(--rule);padding:3px 9px}
+  .rail li.on{border-color:var(--red)}
+  main{order:2}
+  .side{order:3;grid-column:1;margin-top:20px;max-width:none}
+  .rail .src{order:4}
+  .bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .bar .g{flex:1 1 100%}
+  .bar .g:first-child button{flex:1}
+  .bar .g:nth-child(2){flex:0 0 auto}
+  .bar label.g{flex:1 1 180px}
+  .bar label input{flex:1;width:auto}
+  .row{display:contents}
+  .bar .tools,.keys{display:none}
+}

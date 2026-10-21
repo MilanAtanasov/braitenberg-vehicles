@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Braitenberg Vehicles 1–14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <nav class="rail" aria-label="Vehicles">
+    <h2>Vehicles</h2>
+    <ol id="rail"></ol>
+    <p class="src"><a href="playground.html" style="color:inherit"><b>Playground</b> puts several vehicles in one arena with food that appears and expires</a></p>
+    <p class="src">After V. Braitenberg, <i>Vehicles: Experiments in Synthetic Psychology</i>, MIT Press 1984.</p>
+  </nav>
+
+  <main>
+    <div class="stagewrap">
+      <canvas id="cv"></canvas>
+    </div>
+    <p id="vSummary"></p>
+    <div class="bar" id="bar">
+      <div class="row">
+        <div class="g">
+          <button id="bPause">Pause</button>
+          <button id="bReset">Reset</button>
+          <button id="bShuffle">New start</button>
+          <span class="seed" id="seedV" title="Seed of this run, kept in the address as ?seed=">run 4</span>
+        </div>
+        <div class="g">
+          <button id="bAdd">Add source</button>
+          <button id="bDel">Remove source</button>
+          <button id="bTrails" class="on">Trails</button>
+        </div>
+      </div>
+      <div class="row">
+        <label class="g">Speed <input id="speed" type="range" min="0.25" max="20" step="0.25" value="1"> <span id="speedV">1×</span></label>
+        <div class="g tools">
+          <select id="recMode" aria-label="Image and clip contents">
+            <option value="both">Stage and panel</option>
+            <option value="stage">Stage only</option>
+          </select>
+          <button id="bPng">Save image</button>
+          <button id="bRec">Record clip</button>
+          <button id="bInside">Inside</button>
+          <button id="bPresent">Present</button>
+        </div>
+      </div>
+      <p class="keys">Space pause · R reset · ← → vehicle · P present</p>
+    </div>
+    <h3 class="inh">Inside the vehicle</h3>
+    <canvas id="inner"></canvas>
+  </main>
+
+  <aside class="side">
+    <h1 id="vTitle"></h1>
+    <div class="tabs" id="variants"></div>
+    <p id="vText"></p>
+    <div id="controls"></div>
+    <p class="note" id="vNote"></p>
+  </aside>
+</div>
+<script src="core.js"></script>
+<script src="v1-7.js"></script>
+<script src="v8-14.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
